@@ -1,57 +1,74 @@
-import telebot
 import os
-from yt_dlp import YoutubeDL
+import re
+import requests
+from pytube import YouTube
+from moviepy.editor import *
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
-# Telegram bot token
-bot_token = '7586237226:AAHPMFLJKX91meJaUdlhQKHvOz2n41PRZnI'  # Token kamu
-bot = telebot.TeleBot(bot_token)
+# Token bot Telegram kamu
+TOKEN = '7586237226:AAHPMFLJKX91meJaUdlhQKHvOz2n41PRZnI'
 
-# Fungsi untuk mengunduh dan mengonversi TikTok ke MP3
-def download_tiktok_as_mp3(url):
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'outtmpl': 'downloads/%(id)s.%(ext)s',
-    }
-    
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        file_name = ydl.prepare_filename(info)
-        mp3_file = file_name.rsplit('.', 1)[0] + '.mp3'
-        
-        return mp3_file
+# Fungsi untuk mengunduh video dari TikTok dan mengonversi ke MP3
+def tiktok_to_mp3(tiktok_url, file_name):
+    try:
+        # Download video menggunakan pytube
+        yt = YouTube(tiktok_url)
+        video = yt.streams.filter(only_audio=True).first()
+        output_path = video.download(filename=f"{file_name}.mp4")
 
-# Command /start
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    bot.reply_to(message, "Halo! Kirimkan link TikTok yang ingin kamu konversi menjadi MP3.")
+        # Konversi video ke MP3
+        video_clip = AudioFileClip(output_path)
+        video_clip.write_audiofile(f"{file_name}.mp3")
+        video_clip.close()
 
-# Command untuk menerima link TikTok
-@bot.message_handler(func=lambda message: True)
-def handle_message(message):
-    url = message.text
-    
-    if "tiktok.com" in url:
-        bot.reply_to(message, "Mengunduh dan mengonversi video TikTok ke MP3, mohon tunggu sebentar...")
-        
-        try:
-            mp3_file = download_tiktok_as_mp3(url)
-            
+        # Hapus file video setelah konversi
+        os.remove(output_path)
+
+        return f"{file_name}.mp3"
+    except Exception as e:
+        print(f"Error: {e}")
+        return None
+
+# Fungsi untuk menangani pesan masuk
+def handle_message(update: Update, context: CallbackContext):
+    message_text = update.message.text
+
+    # Validasi link TikTok
+    tiktok_url = re.search(r"(https?://[^\s]+)", message_text)
+    if tiktok_url:
+        tiktok_url = tiktok_url.group(1)
+        update.message.reply_text("Sedang mengunduh dan mengonversi video TikTok ke MP3...")
+
+        # Proses unduh dan konversi
+        mp3_file = tiktok_to_mp3(tiktok_url, "tiktok_audio")
+        if mp3_file:
             # Kirim file MP3 ke pengguna
-            with open(mp3_file, 'rb') as audio:
-                bot.send_audio(message.chat.id, audio)
-            
-            # Hapus file setelah dikirim
-            os.remove(mp3_file)
-        except Exception as e:
-            bot.reply_to(message, f"Terjadi kesalahan: {str(e)}")
+            update.message.reply_audio(audio=open(mp3_file, 'rb'))
+            os.remove(mp3_file)  # Hapus file MP3 setelah dikirim
+        else:
+            update.message.reply_text("Gagal mengunduh atau mengonversi video TikTok.")
     else:
-        bot.reply_to(message, "Link tidak valid. Harap kirimkan link TikTok yang benar.")
+        update.message.reply_text("Kirim link TikTok yang valid untuk diunduh!")
 
-# Start bot
+# Fungsi untuk memulai bot
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text("Halo! Kirim tautan video TikTok dan saya akan mengonversinya menjadi MP3.")
+
+def main():
+    # Inisialisasi bot
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    # Command handler
+    dp.add_handler(CommandHandler("start", start))
+
+    # Message handler
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+
+    # Start bot
+    updater.start_polling()
+    updater.idle()
+
 if __name__ == '__main__':
-    bot.polling()
+    main()
